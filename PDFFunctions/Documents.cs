@@ -71,13 +71,74 @@ namespace PDFFunctions
             ArrayList imported_pages = new_doc.ImportPages(import_list);
 
             // Paper dimension for A3 format in points. Because one inch has 
-            // 72 points, 11.69 inch 72 = 841.69 points
-            Rect media_box = new Rect(0, 0, 1190.88, 841.69);
+            // 72 points, 11.69 inch 72 = 841.69 points vs 1190.88 points
+            // https://community.apryse.com/t/how-do-i-control-paper-size-when-printing-pdf-using-startprintjob-in-c/1243
+            /**
+4A0 = 1682 mm x 2378 mm = 4768 pt x 6741 pt
+2A0 = 1189 mm x 1682 mm = 3370 pt x 4768 pt
+A0 = 841 mm x 1189 mm = 2384 pt x 3370 pt
+A1 = 594 mm x 841 mm = 1684 pt x 2384 pt
+A2 = 420 mm x 594 mm = 1191 pt x 1684 pt
+A3 = 297 mm x 420 mm = 842 pt x 1191 pt
+A4 = 210 mm x 297 mm = 595 pt x 842 pt
+A5 = 148 mm x 210 mm = 420 pt x 595 pt
+A6 = 105 mm x 148 mm = 298 pt x 420 pt
+A7 = 74 mm x 105 mm = 210 pt x 298 pt
+A8 = 52 mm x 74 mm = 147 pt x 210 pt
+A9 = 37 mm x 52 mm = 105 pt x 147 pt
+A10 = 26 mm x 37 mm = 74 pt x 105 pt
+
+B0 = 1000 mm x 1414 mm = 2835 pt x 4008 pt
+B1 = 707 mm x 1000 mm = 2004 pt x 2835 pt
+B2 = 500 mm x 707 mm = 1417 pt x 2004 pt
+B3 = 353 mm x 500 mm = 1001 pt x 1417 pt
+B4 = 250 mm x 353 mm = 709 pt x 1001 pt
+B5 = 176 mm x 250 mm = 499 pt x 709 pt
+B6 = 125 mm x 176 mm = 354 pt x 499 pt
+B7 = 88 mm x 125 mm = 249 pt x 354 pt
+B8 = 62 mm x 88 mm = 176 pt x 249 pt
+B9 = 44 mm x 62 mm = 125 pt x 176 pt
+B10 = 31 mm x 44 mm = 88 pt x 125 pt
+
+C0 = 917 mm x 1297 mm = 2599 pt x 3677 pt
+C1 = 648 mm x 917 mm = 1837 pt x 2599 pt
+C2 = 458 mm x 648 mm = 1298 pt x 1837 pt
+C3 = 324 mm x 458 mm = 918 pt x 1298 pt
+C4 = 229 mm x 324 mm = 649 pt x 918 pt
+C5 = 162 mm x 229 mm = 459 pt x 649 pt
+C6 = 114 mm x 162 mm = 323 pt x 459 pt
+C7 = 81 mm x 114 mm = 230 pt x 323 pt
+C8 = 57 mm x 81 mm = 162 pt x 230 pt
+C9 = 40 mm x 57 mm = 113 pt x 162 pt
+C10 = 28 mm x 40 mm = 79 pt x 113 pt
+
+Letter 8.5 x 11 612 x 792
+Legal 8.5 x 14 612 x 1008
+Ledger 11 x 17 792 x 1224
+Executive 7.25 x 10.5 522 x 756
+A3 11.69 x 16.53 842 x 1190
+A4 8.27 x 11.69 595 x 842
+A5 5.83 x 8.27 420 x 595
+A6 4.13 x 5.83 297 x 420
+Photo 4 x 6 288 x 432
+B4 10.126 x 14.342 729 x 1033
+B5 7.17 x 10.126 516 x 729
+Oufuku-Hagaki 5.83 x 7.87 420 x 567
+Hagaki 3.94 x 5.83 284 x 420
+Super B 13 x 19 936 x 1368
+Flsa 8.5 x 13 612 x 936
+Number 10 Envelope 4.12 x 9.5 297 x 684
+A2 Envelope 4.37 x 5.75 315 x 414
+C6 Envelope 4.49 x 6.38 323 x 459
+DL Envelope 4.33 x 8.66 312 x 624
+             */
+            // letter 612 x 792
+            Rect media_box = new Rect(0, 0, 612, 792);
             double mid_point = media_box.Width() / 2;
 
             for (int i = 0; i < imported_pages.Count; ++i)
             {
-                // Create a blank new A3 page and place on it two pages from the input document.
+                // Create a blank new letter page and place on it two pages from the input document.
                 Page new_page = new_doc.PageCreate(media_box);
                 writer.Begin(new_page);
 
@@ -85,24 +146,11 @@ namespace PDFFunctions
                 Page src_page = (Page)imported_pages[i];
                 Element element = builder.CreateForm(src_page);
 
-                double sc_x = mid_point / src_page.GetPageWidth();
+                double sc_x = media_box.Width() / src_page.GetPageWidth();
                 double sc_y = media_box.Height() / src_page.GetPageHeight();
                 double scale = Math.Min(sc_x, sc_y);
                 element.GetGState().SetTransform(scale, 0, 0, scale, 0, 0);
                 writer.WritePlacedElement(element);
-
-                // Place the second page
-                ++i;
-                if (i < imported_pages.Count)
-                {
-                    src_page = (Page)imported_pages[i];
-                    element = builder.CreateForm(src_page);
-                    sc_x = mid_point / src_page.GetPageWidth();
-                    sc_y = media_box.Height() / src_page.GetPageHeight();
-                    scale = Math.Min(sc_x, sc_y);
-                    element.GetGState().SetTransform(scale, 0, 0, scale, mid_point, 0);
-                    writer.WritePlacedElement(element);
-                }
 
                 writer.End();
                 new_doc.PagePushBack(new_page);
@@ -126,14 +174,14 @@ namespace PDFFunctions
                 {
                     ArrayList imported_pages = new_doc.ImportPages(import_list);
 
-                    // Paper dimension for A3 format in points. Because one inch has 
+                    // Paper dimension for letter format in points. Because one inch has 
                     // 72 points, 11.69 inch 72 = 841.69 points
                     Rect media_box = new Rect(0, 0, 1190.88, 841.69);
                     double mid_point = media_box.Width() / 2;
 
                     for (int i = 0; i < imported_pages.Count; ++i)
                     {
-                        // Create a blank new A3 page and place on it two pages from the input document.
+                        // Create a blank new letter page and place on it two pages from the input document.
                         Page new_page = new_doc.PageCreate(media_box);
                         writer.Begin(new_page);
 
