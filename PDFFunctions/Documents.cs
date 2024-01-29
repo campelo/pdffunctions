@@ -36,18 +36,22 @@ namespace PDFFunctions
             // Relative path to the folder containing test files.
             string input_path = Path.Combine(Path.GetTempPath(), "pdf_input");
             string output_path = Path.Combine(Path.GetTempPath(), "pdf_output");
+            string temp_pdf_folder_name = Path.Combine(input_path, Guid.NewGuid().ToString());
 
             try
             {
-                var files = Directory.GetFiles(input_path, "*.pdf");
+                if (!Directory.Exists(temp_pdf_folder_name))
+                    Directory.CreateDirectory(temp_pdf_folder_name);
+                var files = Directory.GetFiles(input_path);
 
                 using (PDFDoc new_doc = new PDFDoc()) // Create a new document
                 using (ElementBuilder builder = new ElementBuilder())
                 using (ElementWriter writer = new ElementWriter())
                 {
+                    int doc_order = 1;
                     foreach (var file in files)
                     {
-                        MergeFile(new_doc, builder, writer, file);
+                        MergeFile(new_doc, builder, writer, file, temp_pdf_folder_name, ref doc_order);
                     }
                     new_doc.Save(Path.Combine(output_path, "mergedfile.pdf"), SDFDoc.SaveOptions.e_linearized);
                     _logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
@@ -57,13 +61,50 @@ namespace PDFFunctions
             {
                 _logger.LogInformation("Exception caught:\n{0}", e);
             }
-            PDFNet.Terminate();
+            finally
+            {
+                PDFNet.Terminate();
+                try
+                {
+                    if (Directory.Exists(temp_pdf_folder_name))
+                        Directory.Delete(temp_pdf_folder_name, true);
+                }
+                catch
+                {
+                }
+            }
         }
 
-        private static void MergeFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string file)
+        private void MergeFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string file, string temp_pdf_folder_name, ref int doc_order)
+        {
+            var extension = Path.GetExtension(file)?.ToLower();
+            var new_file = extension switch
+            {
+                ".pdf" => file,
+                _ => CreateTempPDF(file, temp_pdf_folder_name, ref doc_order)
+            };
+            MergePDFFile(new_doc, builder, writer, new_file);
+        }
+
+        private string CreateTempPDF(string file, string temp_pdf_folder_name, ref int doc_order)
+        {
+            var doc = new PDFDoc();
+            pdftron.PDF.Convert.ToPdf(doc, file);
+            var file_name = Path.Combine(temp_pdf_folder_name, $"doc_{doc_order++}.pdf");
+            doc.Save(file_name, SDFDoc.SaveOptions.e_linearized);
+            return file_name;
+        }
+
+        private static void MergePDFFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string pdf_file)
+        {
+            FileStream fileStream = new FileStream(pdf_file, FileMode.Open, FileAccess.Read);
+            MergePDFFile(new_doc, builder, writer, fileStream);
+        }
+
+        private static void MergePDFFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, Stream stream)
         {
             ArrayList import_list = new ArrayList();
-            var in_doc = new PDFDoc(file);
+            var in_doc = new PDFDoc(stream);
             in_doc.InitSecurityHandler();
             for (PageIterator itr = in_doc.GetPageIterator(); itr.HasNext(); itr.Next())
                 import_list.Add(itr.Current());
