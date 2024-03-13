@@ -15,12 +15,15 @@ public class Documents
 {
     private readonly ILogger logger;
     private readonly ApryseOptions options;
+    private readonly string inputPath = @"..\..\..\..\sample\input";
+    private readonly string outputPath = @"..\..\..\..\sample\output";
 
     public Documents(ILoggerFactory loggerFactory, IOptions<ApryseOptions> options)
     {
         this.options = options.Value;
         logger = loggerFactory.CreateLogger<Documents>();
         PDFNet.Initialize(this.options.Key);
+        PDFNet.AddResourceSearchPath(@"..\..\..\..\lib\");
     }
 
     [Function(nameof(Merge))]
@@ -53,39 +56,39 @@ public class Documents
 
     private void ConvertDoc()
     {
-        string input_path = Path.Combine(Path.GetTempPath(), "pdf_input");
-        string output_path = Path.Combine(Path.GetTempPath(), "pdf_output", "converted");
-        if (!Directory.Exists(output_path))
-            Directory.CreateDirectory(output_path);
-        foreach (string originalFile in Directory.GetFiles(input_path))
+        string convertedPath = Path.Combine(outputPath, "converted");
+        if (!Directory.Exists(convertedPath))
+            Directory.CreateDirectory(convertedPath);
+        foreach (string originalFile in Directory.GetFiles(inputPath))
         {
             PDFDoc doc = new();
             pdftron.PDF.Convert.ToPdf(doc, originalFile);
             var pdfFile = Path.GetFileName(originalFile) + ".pdf";
-            doc.Save(Path.Combine(output_path, pdfFile), SDFDoc.SaveOptions.e_linearized);
+            doc.Save(Path.Combine(convertedPath, pdfFile), SDFDoc.SaveOptions.e_linearized);
 
-            //pdftron.PDF.Convert.WordOutputOptions wordOutputOptions = new();
+            pdftron.PDF.Convert.WordOutputOptions wordOutputOptions = new();
 
-            //// Optionally convert only the first page
-            //wordOutputOptions.SetPages(1, 1);
-            //var docFile = Path.GetFileNameWithoutExtension(originalFile);
-            //// Requires the Structured Output module
-            //pdftron.PDF.Convert.ToWord(pdfFile, Path.Combine(output_path, docFile), wordOutputOptions);
+            // Optionally convert only the first page
+            wordOutputOptions.SetPages(1, 1);
+            var docFile = Path.GetFileNameWithoutExtension(originalFile);
+            // Requires the Structured Output module
+            pdftron.PDF.Convert.ToWord(Path.Combine(convertedPath, pdfFile), Path.Combine(convertedPath, docFile) + ".docx", wordOutputOptions);
         }
     }
 
     private void MergePDFs()
     {
         // Relative path to the folder containing test files.
-        string input_path = Path.Combine(Path.GetTempPath(), "pdf_input");
-        string output_path = Path.Combine(Path.GetTempPath(), "pdf_output", "merged");
-        string temp_pdf_folder_name = Path.Combine(input_path, Guid.NewGuid().ToString());
+        string mergedPath = Path.Combine(outputPath, "merged");
+        if (!Directory.Exists(mergedPath))
+            Directory.CreateDirectory(mergedPath);
+        string temp_pdf_folder_name = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
 
         try
         {
             if (!Directory.Exists(temp_pdf_folder_name))
                 Directory.CreateDirectory(temp_pdf_folder_name);
-            var files = Directory.GetFiles(input_path);
+            var files = Directory.GetFiles(inputPath);
 
             using (PDFDoc new_doc = new()) // Create a new document
             using (ElementBuilder builder = new())
@@ -96,7 +99,7 @@ public class Documents
                 {
                     MergeFile(new_doc, builder, writer, file, temp_pdf_folder_name, ref doc_order);
                 }
-                new_doc.Save(Path.Combine(output_path, "mergedfile.pdf"), SDFDoc.SaveOptions.e_linearized);
+                new_doc.Save(Path.Combine(mergedPath, "mergedfile.pdf"), SDFDoc.SaveOptions.e_linearized);
                 logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
             }
         }
@@ -238,66 +241,6 @@ DL Envelope 4.33 x 8.66 312 x 624
 
             writer.End();
             new_doc.PagePushBack(new_page);
-        }
-    }
-
-    private void OriginalMethod(string input_path, string output_path)
-    {
-        using (PDFDoc in_doc = new PDFDoc(input_path + "newsletter.pdf"))
-        {
-            in_doc.InitSecurityHandler();
-
-            // Create a list of pages to import from one PDF document to another.
-            ArrayList import_list = new ArrayList();
-            for (PageIterator itr = in_doc.GetPageIterator(); itr.HasNext(); itr.Next())
-                import_list.Add(itr.Current());
-
-            using (PDFDoc new_doc = new PDFDoc()) // Create a new document
-            using (ElementBuilder builder = new ElementBuilder())
-            using (ElementWriter writer = new ElementWriter())
-            {
-                ArrayList imported_pages = new_doc.ImportPages(import_list);
-
-                // Paper dimension for letter format in points. Because one inch has 
-                // 72 points, 11.69 inch 72 = 841.69 points
-                Rect media_box = new Rect(0, 0, 1190.88, 841.69);
-                double mid_point = media_box.Width() / 2;
-
-                for (int i = 0; i < imported_pages.Count; ++i)
-                {
-                    // Create a blank new letter page and place on it two pages from the input document.
-                    Page new_page = new_doc.PageCreate(media_box);
-                    writer.Begin(new_page);
-
-                    // Place the first page
-                    Page src_page = (Page)imported_pages[i];
-                    Element element = builder.CreateForm(src_page);
-
-                    double sc_x = mid_point / src_page.GetPageWidth();
-                    double sc_y = media_box.Height() / src_page.GetPageHeight();
-                    double scale = Math.Min(sc_x, sc_y);
-                    element.GetGState().SetTransform(scale, 0, 0, scale, 0, 0);
-                    writer.WritePlacedElement(element);
-
-                    // Place the second page
-                    ++i;
-                    if (i < imported_pages.Count)
-                    {
-                        src_page = (Page)imported_pages[i];
-                        element = builder.CreateForm(src_page);
-                        sc_x = mid_point / src_page.GetPageWidth();
-                        sc_y = media_box.Height() / src_page.GetPageHeight();
-                        scale = Math.Min(sc_x, sc_y);
-                        element.GetGState().SetTransform(scale, 0, 0, scale, mid_point, 0);
-                        writer.WritePlacedElement(element);
-                    }
-
-                    writer.End();
-                    new_doc.PagePushBack(new_page);
-                }
-                new_doc.Save(output_path + "newsletter_booklet.pdf", SDFDoc.SaveOptions.e_linearized);
-                logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
-            }
         }
     }
 }
