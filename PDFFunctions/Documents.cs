@@ -9,112 +9,155 @@ using pdftron.SDF;
 using System.Collections;
 using System.Net;
 
-namespace PDFFunctions
+namespace PDFFunctions;
+
+public class Documents
 {
-    public class Documents(ILoggerFactory loggerFactory, IOptions<ApryseOptions> options)
+    private readonly ILogger logger;
+    private readonly ApryseOptions options;
+
+    public Documents(ILoggerFactory loggerFactory, IOptions<ApryseOptions> options)
     {
-        private readonly ILogger _logger = loggerFactory.CreateLogger<Documents>();
+        this.options = options.Value;
+        logger = loggerFactory.CreateLogger<Documents>();
+        PDFNet.Initialize(this.options.Key);
+    }
 
-        [Function(nameof(Merge))]
-        public HttpResponseData Merge(
-            [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "Merge")]
-            HttpRequestData req)
+    [Function(nameof(Merge))]
+    public HttpResponseData Merge(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = nameof(Merge))]
+        HttpRequestData req)
+    {
+        logger.LogInformation($"C# HTTP trigger function {nameof(Merge)} processed a request.");
+        MergePDFs();
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
+        response.WriteString("All documents merged.");
+        return response;
+    }
+
+    [Function(nameof(ConvertDoc))]
+    public HttpResponseData ConvertDoc(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = $"{nameof(ConvertDoc)}")]
+        HttpRequestData req)
+    {
+        logger.LogInformation($"C# HTTP trigger function {nameof(ConvertDoc)} processed a request.");
+        ConvertDoc();
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
+        response.WriteString("Document converted.");
+        return response;
+    }
+
+    private void ConvertDoc()
+    {
+        string input_path = Path.Combine(Path.GetTempPath(), "pdf_input");
+        string output_path = Path.Combine(Path.GetTempPath(), "pdf_output", "converted");
+        if (!Directory.Exists(output_path))
+            Directory.CreateDirectory(output_path);
+        foreach (string originalFile in Directory.GetFiles(input_path))
         {
-            _logger.LogInformation($"C# HTTP trigger function {nameof(Merge)} processed a request.");
-            MergePDFs(options);
+            PDFDoc doc = new();
+            pdftron.PDF.Convert.ToPdf(doc, originalFile);
+            var pdfFile = Path.GetFileName(originalFile) + ".pdf";
+            doc.Save(Path.Combine(output_path, pdfFile), SDFDoc.SaveOptions.e_linearized);
 
-            var response = req.CreateResponse(HttpStatusCode.OK);
-            response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
-            response.WriteString("All documents merged.");
-            return response;
+            //pdftron.PDF.Convert.WordOutputOptions wordOutputOptions = new();
+
+            //// Optionally convert only the first page
+            //wordOutputOptions.SetPages(1, 1);
+            //var docFile = Path.GetFileNameWithoutExtension(originalFile);
+            //// Requires the Structured Output module
+            //pdftron.PDF.Convert.ToWord(pdfFile, Path.Combine(output_path, docFile), wordOutputOptions);
         }
+    }
 
-        private void MergePDFs(IOptions<ApryseOptions> options)
+    private void MergePDFs()
+    {
+        // Relative path to the folder containing test files.
+        string input_path = Path.Combine(Path.GetTempPath(), "pdf_input");
+        string output_path = Path.Combine(Path.GetTempPath(), "pdf_output", "merged");
+        string temp_pdf_folder_name = Path.Combine(input_path, Guid.NewGuid().ToString());
+
+        try
         {
-            PDFNet.Initialize(options.Value.Key);
+            if (!Directory.Exists(temp_pdf_folder_name))
+                Directory.CreateDirectory(temp_pdf_folder_name);
+            var files = Directory.GetFiles(input_path);
 
-            // Relative path to the folder containing test files.
-            string input_path = Path.Combine(Path.GetTempPath(), "pdf_input");
-            string output_path = Path.Combine(Path.GetTempPath(), "pdf_output");
-            string temp_pdf_folder_name = Path.Combine(input_path, Guid.NewGuid().ToString());
-
+            using (PDFDoc new_doc = new()) // Create a new document
+            using (ElementBuilder builder = new())
+            using (ElementWriter writer = new())
+            {
+                int doc_order = 1;
+                foreach (var file in files)
+                {
+                    MergeFile(new_doc, builder, writer, file, temp_pdf_folder_name, ref doc_order);
+                }
+                new_doc.Save(Path.Combine(output_path, "mergedfile.pdf"), SDFDoc.SaveOptions.e_linearized);
+                logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
+            }
+        }
+        catch (Exception e)
+        {
+            logger.LogInformation("Exception caught:\n{0}", e);
+        }
+        finally
+        {
+            PDFNet.Terminate();
             try
             {
-                if (!Directory.Exists(temp_pdf_folder_name))
-                    Directory.CreateDirectory(temp_pdf_folder_name);
-                var files = Directory.GetFiles(input_path);
-
-                using (PDFDoc new_doc = new PDFDoc()) // Create a new document
-                using (ElementBuilder builder = new ElementBuilder())
-                using (ElementWriter writer = new ElementWriter())
-                {
-                    int doc_order = 1;
-                    foreach (var file in files)
-                    {
-                        MergeFile(new_doc, builder, writer, file, temp_pdf_folder_name, ref doc_order);
-                    }
-                    new_doc.Save(Path.Combine(output_path, "mergedfile.pdf"), SDFDoc.SaveOptions.e_linearized);
-                    _logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
-                }
+                if (Directory.Exists(temp_pdf_folder_name))
+                    Directory.Delete(temp_pdf_folder_name, true);
             }
-            catch (Exception e)
+            catch
             {
-                _logger.LogInformation("Exception caught:\n{0}", e);
-            }
-            finally
-            {
-                PDFNet.Terminate();
-                try
-                {
-                    if (Directory.Exists(temp_pdf_folder_name))
-                        Directory.Delete(temp_pdf_folder_name, true);
-                }
-                catch
-                {
-                }
             }
         }
+    }
 
-        private void MergeFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string file, string temp_pdf_folder_name, ref int doc_order)
+    private void MergeFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string file, string temp_pdf_folder_name, ref int doc_order)
+    {
+        var extension = Path.GetExtension(file)?.ToLower();
+        var new_file = extension switch
         {
-            var extension = Path.GetExtension(file)?.ToLower();
-            var new_file = extension switch
-            {
-                ".pdf" => file,
-                _ => CreateTempPDF(file, temp_pdf_folder_name, ref doc_order)
-            };
-            MergePDFFile(new_doc, builder, writer, new_file);
-        }
+            ".pdf" => file,
+            _ => CreateTempPDF(file, temp_pdf_folder_name, ref doc_order)
+        };
+        MergePDFFile(new_doc, builder, writer, new_file);
+    }
 
-        private string CreateTempPDF(string file, string temp_pdf_folder_name, ref int doc_order)
-        {
-            var doc = new PDFDoc();
-            pdftron.PDF.Convert.ToPdf(doc, file);
-            var file_name = Path.Combine(temp_pdf_folder_name, $"doc_{doc_order++}.pdf");
-            doc.Save(file_name, SDFDoc.SaveOptions.e_linearized);
-            return file_name;
-        }
+    private string CreateTempPDF(string file, string temp_pdf_folder_name, ref int doc_order)
+    {
+        var doc = new PDFDoc();
+        pdftron.PDF.Convert.ToPdf(doc, file);
+        var file_name = Path.Combine(temp_pdf_folder_name, $"doc_{doc_order++}.pdf");
+        doc.Save(file_name, SDFDoc.SaveOptions.e_linearized);
+        return file_name;
+    }
 
-        private static void MergePDFFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string pdf_file)
-        {
-            FileStream fileStream = new FileStream(pdf_file, FileMode.Open, FileAccess.Read);
-            MergePDFFile(new_doc, builder, writer, fileStream);
-        }
+    private static void MergePDFFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, string pdf_file)
+    {
+        FileStream fileStream = new FileStream(pdf_file, FileMode.Open, FileAccess.Read);
+        MergePDFFile(new_doc, builder, writer, fileStream);
+    }
 
-        private static void MergePDFFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, Stream stream)
-        {
-            ArrayList import_list = new ArrayList();
-            var in_doc = new PDFDoc(stream);
-            in_doc.InitSecurityHandler();
-            for (PageIterator itr = in_doc.GetPageIterator(); itr.HasNext(); itr.Next())
-                import_list.Add(itr.Current());
+    private static void MergePDFFile(PDFDoc new_doc, ElementBuilder builder, ElementWriter writer, Stream stream)
+    {
+        ArrayList import_list = new ArrayList();
+        var in_doc = new PDFDoc(stream);
+        in_doc.InitSecurityHandler();
+        for (PageIterator itr = in_doc.GetPageIterator(); itr.HasNext(); itr.Next())
+            import_list.Add(itr.Current());
 
-            ArrayList imported_pages = new_doc.ImportPages(import_list);
+        ArrayList imported_pages = new_doc.ImportPages(import_list);
 
-            // Paper dimension for A3 format in points. Because one inch has 
-            // 72 points, 11.69 inch 72 = 841.69 points vs 1190.88 points
-            // https://community.apryse.com/t/how-do-i-control-paper-size-when-printing-pdf-using-startprintjob-in-c/1243
-            /**
+        // Paper dimension for A3 format in points. Because one inch has 
+        // 72 points, 11.69 inch 72 = 841.69 points vs 1190.88 points
+        // https://community.apryse.com/t/how-do-i-control-paper-size-when-printing-pdf-using-startprintjob-in-c/1243
+        /**
 4A0 = 1682 mm x 2378 mm = 4768 pt x 6741 pt
 2A0 = 1189 mm x 1682 mm = 3370 pt x 4768 pt
 A0 = 841 mm x 1189 mm = 2384 pt x 3370 pt
@@ -172,89 +215,88 @@ Number 10 Envelope 4.12 x 9.5 297 x 684
 A2 Envelope 4.37 x 5.75 315 x 414
 C6 Envelope 4.49 x 6.38 323 x 459
 DL Envelope 4.33 x 8.66 312 x 624
-             */
-            // letter 612 x 792
-            Rect media_box = new Rect(0, 0, 612, 792);
-            double mid_point = media_box.Width() / 2;
+         */
+        // letter 612 x 792
+        Rect media_box = new Rect(0, 0, 612, 792);
+        double mid_point = media_box.Width() / 2;
 
-            for (int i = 0; i < imported_pages.Count; ++i)
-            {
-                // Create a blank new letter page and place on it two pages from the input document.
-                Page new_page = new_doc.PageCreate(media_box);
-                writer.Begin(new_page);
-
-                // Place the first page
-                Page src_page = (Page)imported_pages[i];
-                Element element = builder.CreateForm(src_page);
-
-                double sc_x = media_box.Width() / src_page.GetPageWidth();
-                double sc_y = media_box.Height() / src_page.GetPageHeight();
-                double scale = Math.Min(sc_x, sc_y);
-                element.GetGState().SetTransform(scale, 0, 0, scale, 0, 0);
-                writer.WritePlacedElement(element);
-
-                writer.End();
-                new_doc.PagePushBack(new_page);
-            }
-        }
-
-        private void OriginalMethod(string input_path, string output_path)
+        for (int i = 0; i < imported_pages.Count; ++i)
         {
-            using (PDFDoc in_doc = new PDFDoc(input_path + "newsletter.pdf"))
+            // Create a blank new letter page and place on it two pages from the input document.
+            Page new_page = new_doc.PageCreate(media_box);
+            writer.Begin(new_page);
+
+            // Place the first page
+            Page src_page = (Page)imported_pages[i];
+            Element element = builder.CreateForm(src_page);
+
+            double sc_x = media_box.Width() / src_page.GetPageWidth();
+            double sc_y = media_box.Height() / src_page.GetPageHeight();
+            double scale = Math.Min(sc_x, sc_y);
+            element.GetGState().SetTransform(scale, 0, 0, scale, 0, 0);
+            writer.WritePlacedElement(element);
+
+            writer.End();
+            new_doc.PagePushBack(new_page);
+        }
+    }
+
+    private void OriginalMethod(string input_path, string output_path)
+    {
+        using (PDFDoc in_doc = new PDFDoc(input_path + "newsletter.pdf"))
+        {
+            in_doc.InitSecurityHandler();
+
+            // Create a list of pages to import from one PDF document to another.
+            ArrayList import_list = new ArrayList();
+            for (PageIterator itr = in_doc.GetPageIterator(); itr.HasNext(); itr.Next())
+                import_list.Add(itr.Current());
+
+            using (PDFDoc new_doc = new PDFDoc()) // Create a new document
+            using (ElementBuilder builder = new ElementBuilder())
+            using (ElementWriter writer = new ElementWriter())
             {
-                in_doc.InitSecurityHandler();
+                ArrayList imported_pages = new_doc.ImportPages(import_list);
 
-                // Create a list of pages to import from one PDF document to another.
-                ArrayList import_list = new ArrayList();
-                for (PageIterator itr = in_doc.GetPageIterator(); itr.HasNext(); itr.Next())
-                    import_list.Add(itr.Current());
+                // Paper dimension for letter format in points. Because one inch has 
+                // 72 points, 11.69 inch 72 = 841.69 points
+                Rect media_box = new Rect(0, 0, 1190.88, 841.69);
+                double mid_point = media_box.Width() / 2;
 
-                using (PDFDoc new_doc = new PDFDoc()) // Create a new document
-                using (ElementBuilder builder = new ElementBuilder())
-                using (ElementWriter writer = new ElementWriter())
+                for (int i = 0; i < imported_pages.Count; ++i)
                 {
-                    ArrayList imported_pages = new_doc.ImportPages(import_list);
+                    // Create a blank new letter page and place on it two pages from the input document.
+                    Page new_page = new_doc.PageCreate(media_box);
+                    writer.Begin(new_page);
 
-                    // Paper dimension for letter format in points. Because one inch has 
-                    // 72 points, 11.69 inch 72 = 841.69 points
-                    Rect media_box = new Rect(0, 0, 1190.88, 841.69);
-                    double mid_point = media_box.Width() / 2;
+                    // Place the first page
+                    Page src_page = (Page)imported_pages[i];
+                    Element element = builder.CreateForm(src_page);
 
-                    for (int i = 0; i < imported_pages.Count; ++i)
+                    double sc_x = mid_point / src_page.GetPageWidth();
+                    double sc_y = media_box.Height() / src_page.GetPageHeight();
+                    double scale = Math.Min(sc_x, sc_y);
+                    element.GetGState().SetTransform(scale, 0, 0, scale, 0, 0);
+                    writer.WritePlacedElement(element);
+
+                    // Place the second page
+                    ++i;
+                    if (i < imported_pages.Count)
                     {
-                        // Create a blank new letter page and place on it two pages from the input document.
-                        Page new_page = new_doc.PageCreate(media_box);
-                        writer.Begin(new_page);
-
-                        // Place the first page
-                        Page src_page = (Page)imported_pages[i];
-                        Element element = builder.CreateForm(src_page);
-
-                        double sc_x = mid_point / src_page.GetPageWidth();
-                        double sc_y = media_box.Height() / src_page.GetPageHeight();
-                        double scale = Math.Min(sc_x, sc_y);
-                        element.GetGState().SetTransform(scale, 0, 0, scale, 0, 0);
+                        src_page = (Page)imported_pages[i];
+                        element = builder.CreateForm(src_page);
+                        sc_x = mid_point / src_page.GetPageWidth();
+                        sc_y = media_box.Height() / src_page.GetPageHeight();
+                        scale = Math.Min(sc_x, sc_y);
+                        element.GetGState().SetTransform(scale, 0, 0, scale, mid_point, 0);
                         writer.WritePlacedElement(element);
-
-                        // Place the second page
-                        ++i;
-                        if (i < imported_pages.Count)
-                        {
-                            src_page = (Page)imported_pages[i];
-                            element = builder.CreateForm(src_page);
-                            sc_x = mid_point / src_page.GetPageWidth();
-                            sc_y = media_box.Height() / src_page.GetPageHeight();
-                            scale = Math.Min(sc_x, sc_y);
-                            element.GetGState().SetTransform(scale, 0, 0, scale, mid_point, 0);
-                            writer.WritePlacedElement(element);
-                        }
-
-                        writer.End();
-                        new_doc.PagePushBack(new_page);
                     }
-                    new_doc.Save(output_path + "newsletter_booklet.pdf", SDFDoc.SaveOptions.e_linearized);
-                    _logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
+
+                    writer.End();
+                    new_doc.PagePushBack(new_page);
                 }
+                new_doc.Save(output_path + "newsletter_booklet.pdf", SDFDoc.SaveOptions.e_linearized);
+                logger.LogInformation("Done. Result saved in newsletter_booklet.pdf...");
             }
         }
     }
