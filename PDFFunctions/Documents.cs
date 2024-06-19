@@ -26,6 +26,57 @@ public class Documents
         PDFNet.AddResourceSearchPath(@"..\..\..\..\lib\");
     }
 
+    [Function(nameof(FillData))]
+    public async Task<HttpResponseData> FillData(
+        [HttpTrigger(AuthorizationLevel.Anonymous, "post", Route = nameof(FillData))]
+        HttpRequestData req)
+    {
+        logger.LogInformation($"C# HTTP trigger function {nameof(FillData)} processed a request.");
+        Dictionary<string, string> keyValuePairs = await req.ReadFromJsonAsync<Dictionary<string, string>>();
+        FillData(keyValuePairs);
+
+        var response = req.CreateResponse(HttpStatusCode.OK);
+        response.Headers.Add("Content-Type", "text/plain; charset=utf-8");
+        response.WriteString("Document data filled.");
+        return response;
+    }
+
+    private void FillData(Dictionary<string, string> keyValuePairs)
+    {
+        string filledPath = Path.Combine(outputPath, "filled");
+        if (!Directory.Exists(filledPath))
+            Directory.CreateDirectory(filledPath);
+
+        try
+        {
+            var originalFilePath = @"C:\Temp\Test.pdf";
+            var stream = new FileStream(originalFilePath, FileMode.Open, FileAccess.Read);
+            //PDFDoc doc = new(originalFilePath);
+            PDFDoc doc = new(stream);
+
+            foreach (var keyValuePair in keyValuePairs)
+            {
+                Field field = doc.GetField(keyValuePair.Key);
+                if (field is null)
+                    continue;
+                field.SetValue(keyValuePair.Value);
+                field.RefreshAppearance();
+            }
+
+            var streamToSave = new FileStream(Path.Combine(filledPath, "filledfile.pdf"), FileMode.Create, FileAccess.Write);
+            doc.Save(streamToSave, SDFDoc.SaveOptions.e_linearized);
+            //doc.Save(Path.Combine(filledPath, "filledfile.pdf"), SDFDoc.SaveOptions.e_linearized);
+        }
+        catch (Exception e)
+        {
+            logger.LogInformation("Exception caught:\n{0}", e);
+        }
+        finally
+        {
+            PDFNet.Terminate();
+        }
+    }
+
     [Function(nameof(Merge))]
     public HttpResponseData Merge(
         [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = nameof(Merge))]
